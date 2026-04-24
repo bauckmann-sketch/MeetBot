@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import type { Session } from "next-auth";
+import ThemeToggle from "./ThemeToggle";
 
 interface SidebarProps {
   session: Session;
@@ -59,12 +60,16 @@ export default function Sidebar({ session }: SidebarProps) {
             <div className="sidebar-user-email">{user?.email}</div>
           </div>
         </div>
-        <button
-          className="btn btn-ghost btn-sm w-full"
-          onClick={() => signOut({ callbackUrl: "/login" })}
-        >
-          Odhlásit se
-        </button>
+        <div className="flex gap-2" style={{ marginBottom: 8 }}>
+          <ThemeToggle />
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ flex: 1 }}
+            onClick={() => signOut({ callbackUrl: "/login" })}
+          >
+            Odhlásit se
+          </button>
+        </div>
       </div>
     </aside>
   );

@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   // Pokus o zrušení bota přes Recall API
   try {
-    await fetch(`https://us-east-1.recall.ai/api/v1/bot/${botSession.recall_bot_id}/leave_call/`, {
+    await fetch(`https://us-west-2.recall.ai/api/v1/bot/${botSession.recall_bot_id}/leave_call/`, {
       method: "POST",
       headers: {
         Authorization: `Token ${process.env.RECALL_API_KEY}`,

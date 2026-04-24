@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
   // Odešle Recall bot
   try {
-    const recallResponse = await fetch("https://us-east-1.recall.ai/api/v1/bot/", {
+    const recallResponse = await fetch("https://us-west-2.recall.ai/api/v1/bot/", {
       method: "POST",
       headers: {
         Authorization: `Token ${process.env.RECALL_API_KEY}`,
@@ -63,12 +63,18 @@ export async function POST(req: NextRequest) {
 
     if (!recallResponse.ok) {
       const errText = await recallResponse.text();
-      console.error("Recall API error:", errText);
+      console.error("Recall API error:", recallResponse.status, errText);
       await supabase
         .from("bot_sessions")
         .update({ status: "failed" })
         .eq("id", sessionId);
-      return NextResponse.json({ error: "Recall API failed" }, { status: 500 });
+      // Vrátíme detail chyby pro debugging
+      let errDetail: unknown;
+      try { errDetail = JSON.parse(errText); } catch { errDetail = errText; }
+      return NextResponse.json(
+        { error: "Recall API failed", status: recallResponse.status, detail: errDetail },
+        { status: 500 }
+      );
     }
 
     const recallData = await recallResponse.json();
