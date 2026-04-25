@@ -27,6 +27,7 @@ export interface BotSession {
   recall_recording_url: string | null;
   drive_video_url: string | null;
   drive_transcript_url: string | null;
+  drive_recording_url: string | null;
   drive_folder_id: string | null;
   created_at: string;
   ended_at: string | null;
