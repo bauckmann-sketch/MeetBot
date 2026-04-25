@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase";
-import { google } from "googleapis";
+import { createHmac } from "crypto";
+import {
+  getAccessTokenFromRefresh,
+  uploadTranscriptToDrive,
+  uploadRecordingToDrive,
+} from "@/lib/google-drive";
 
 /**
  * AssemblyAI Webhook – přepis dokončen
- * Stáhne výsledek, nahraje na Drive, aktualizuje DB
+ * Stáhne výsledek, nahraje na Drive (přepis prioritně, video best-effort), aktualizuje DB
  */
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -50,23 +55,36 @@ export async function POST(req: NextRequest) {
     const transcript = await transcriptRes.json();
 
     // Vytvoř TXT přepis s časovými značkami a mluvčími
-    const txtContent = buildTranscriptText(transcript);
+    const txtContent = buildTranscriptText(transcript, botSession.event_title);
 
-    // Ulož přepis JSON do DB (pro zobrazení v UI)
+    // Ulož utterances do DB
     const utterances = transcript.utterances ?? [];
 
-    // Nahrát na Google Drive uživatele
+    // === GOOGLE DRIVE UPLOAD ===
     let driveTranscriptUrl: string | null = null;
+    let driveRecordingUrl: string | null = null;
+
     try {
-      driveTranscriptUrl = await uploadToDrive(
+      driveTranscriptUrl = await uploadToDriveWithRefreshToken(
         botSession.user_email,
         botSession.event_title,
         txtContent,
+        botSession.recall_recording_url,
         supabase
-      );
+      ).then(r => r.transcriptUrl);
+
+      // Video upload (best-effort, po transkriptu)
+      if (botSession.recall_recording_url) {
+        driveRecordingUrl = await uploadRecordingWithRefreshToken(
+          botSession.user_email,
+          botSession.event_title,
+          botSession.recall_recording_url,
+          supabase
+        );
+      }
     } catch (driveErr) {
       console.error("Drive upload error:", driveErr);
-      // Nepřeruš – přepis aspoň uložíme do DB
+      // Nepřeruš – přepis je už v DB
     }
 
     // Vypočítej náklady
@@ -98,10 +116,9 @@ export async function POST(req: NextRequest) {
     await supabase.from("bot_sessions").update({
       status: "done",
       drive_transcript_url: driveTranscriptUrl,
+      drive_recording_url: driveRecordingUrl,
       cost_bot_usd: costBot,
       cost_transcript_usd: costTranscript,
-      // Ulož utterances jako JSONB do extra sloupce
-      // (přidáme v schema)
     }).eq("id", sessionId);
 
     // Ulož utterances zvlášť do transcript_data tabulky
@@ -125,18 +142,25 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function buildTranscriptText(transcript: AssemblyTranscript): string {
+function buildTranscriptText(transcript: AssemblyTranscript, eventTitle: string): string {
   const lines: string[] = [
-    `Přepis: ${transcript.id}`,
+    `📝 Přepis: ${eventTitle}`,
     `Datum: ${new Date().toLocaleDateString("cs-CZ")}`,
-    "---",
+    `ID: ${transcript.id}`,
+    "═══════════════════════════════════════",
     "",
   ];
 
   if (transcript.utterances && transcript.utterances.length > 0) {
+    let currentSpeaker = "";
     for (const utt of transcript.utterances) {
       const time = formatMs(utt.start);
-      lines.push(`[${time}] ${utt.speaker}: ${utt.text}`);
+      if (utt.speaker !== currentSpeaker) {
+        currentSpeaker = utt.speaker;
+        lines.push(""); // prázdný řádek mezi mluvčími
+        lines.push(`── Mluvčí ${utt.speaker} ──`);
+      }
+      lines.push(`  [${time}] ${utt.text}`);
     }
   } else {
     lines.push(transcript.text ?? "(prázdný přepis)");
@@ -156,24 +180,88 @@ function formatMs(ms: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-async function uploadToDrive(
+/**
+ * Nahraje transkript na Google Drive s refresh tokenem z DB
+ * PRIORITNÍ – musí projít
+ */
+async function uploadToDriveWithRefreshToken(
   userEmail: string,
   title: string,
   content: string,
+  _recordingUrl: string | null,
   supabase: ReturnType<typeof createServerClient>
-): Promise<string | null> {
-  // Načti user settings (Drive folder)
+): Promise<{ transcriptUrl: string | null }> {
+  // Načti Drive folder ID
   const { data: userSettings } = await supabase
     .from("user_settings")
     .select("drive_folder_id")
     .eq("user_email", userEmail)
     .single();
 
-  // Potřebujeme access token uživatele – ale ten nemáme v webhook kontextu
-  // TODO: Uložit refresh token do DB při prvním přihlášení a použít ho zde
-  // Pro nyní jen logujeme
-  console.log("Drive upload TODO for user:", userEmail, "folder:", userSettings?.drive_folder_id);
-  return null;
+  if (!userSettings?.drive_folder_id) {
+    console.log("No Drive folder configured for user:", userEmail);
+    return { transcriptUrl: null };
+  }
+
+  // Načti refresh token z DB
+  const { data: tokenData } = await supabase
+    .from("user_tokens")
+    .select("google_refresh_token")
+    .eq("user_email", userEmail)
+    .single();
+
+  if (!tokenData?.google_refresh_token) {
+    console.error("No refresh token found for user:", userEmail);
+    return { transcriptUrl: null };
+  }
+
+  // Získej čerstvý access token
+  const accessToken = await getAccessTokenFromRefresh(tokenData.google_refresh_token);
+
+  // Nahrát přepis (PRIORITA)
+  const transcriptUrl = await uploadTranscriptToDrive(
+    accessToken,
+    userSettings.drive_folder_id,
+    title,
+    content
+  );
+
+  return { transcriptUrl };
+}
+
+/**
+ * Nahraje záznam na Google Drive – BEST EFFORT
+ */
+async function uploadRecordingWithRefreshToken(
+  userEmail: string,
+  title: string,
+  videoUrl: string,
+  supabase: ReturnType<typeof createServerClient>
+): Promise<string | null> {
+  const { data: userSettings } = await supabase
+    .from("user_settings")
+    .select("drive_folder_id")
+    .eq("user_email", userEmail)
+    .single();
+
+  if (!userSettings?.drive_folder_id) return null;
+
+  const { data: tokenData } = await supabase
+    .from("user_tokens")
+    .select("google_refresh_token")
+    .eq("user_email", userEmail)
+    .single();
+
+  if (!tokenData?.google_refresh_token) return null;
+
+  const accessToken = await getAccessTokenFromRefresh(tokenData.google_refresh_token);
+
+  return uploadRecordingToDrive(
+    accessToken,
+    userSettings.drive_folder_id,
+    title,
+    videoUrl
+  );
 }
 
 interface AssemblyUtterance {

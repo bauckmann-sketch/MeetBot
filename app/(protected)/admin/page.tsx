@@ -149,14 +149,52 @@ export default function AdminPage() {
             Záznamy a přepisy budou nahrány do vaší Google Drive složky.
           </p>
           {userSettings.drive_folder_name ? (
-            <div className="flex items-center gap-3">
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span className="badge badge-done">📁 {userSettings.drive_folder_name}</span>
               <span className="text-sm text-muted">ID: {userSettings.drive_folder_id}</span>
+              <a
+                href={`https://drive.google.com/drive/folders/${userSettings.drive_folder_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-ghost btn-sm"
+              >
+                Otevřít na Drivu ↗
+              </a>
             </div>
           ) : (
-            <div className="empty-state" style={{ padding: 20 }}>
-              <div className="empty-state-title" style={{ fontSize: 14 }}>Složka nenastavena</div>
-              <div className="empty-state-desc">Drive integrace bude dostupná po nasazení na Vercel.</div>
+            <div style={{ textAlign: "center", padding: 20 }}>
+              <div style={{ marginBottom: 12, color: "var(--text-secondary)" }}>
+                Složka nenastavena
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={async () => {
+                  setSaving(true);
+                  try {
+                    const res = await fetch("/api/drive/folder", { method: "POST" });
+                    if (!res.ok) {
+                      const err = await res.json();
+                      throw new Error(err.error);
+                    }
+                    const { folder } = await res.json();
+                    setUserSettings({
+                      drive_folder_id: folder.id,
+                      drive_folder_name: folder.name,
+                    });
+                    showToast("Složka vytvořena na Google Drivu ✅", "success");
+                  } catch (err: unknown) {
+                    showToast(
+                      err instanceof Error ? err.message : "Chyba při vytváření složky",
+                      "error"
+                    );
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                disabled={saving}
+              >
+                {saving ? "Vytvářím…" : "📁 Vytvořit složku na Google Drivu"}
+              </button>
             </div>
           )}
         </div>
