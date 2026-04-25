@@ -2,10 +2,15 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Lightweight auth check v proxy – používá pouze JWT cookie, žádný Supabase
-export async function proxy(req: NextRequest) {
+/**
+ * Edge Runtime middleware – používá POUZE getToken() z next-auth/jwt.
+ * getToken() je Edge-kompatibilní (používá Web Crypto API, žádný Node.js, žádný Supabase).
+ * Vercel vyžaduje middleware.ts (nikoli proxy.ts).
+ */
+export async function middleware(req: NextRequest) {
   const { nextUrl } = req;
 
+  // Veřejné routes – propustit bez autentizace
   const isPublic = nextUrl.pathname.startsWith("/login");
   const isApiAuth = nextUrl.pathname.startsWith("/api/auth");
   const isWebhook =
@@ -14,6 +19,7 @@ export async function proxy(req: NextRequest) {
 
   if (isApiAuth || isWebhook || isPublic) return NextResponse.next();
 
+  // JWT check – Edge-kompatibilní, čte pouze cookie
   const token = await getToken({
     req,
     secret: process.env.AUTH_SECRET,
