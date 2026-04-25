@@ -24,7 +24,10 @@ export default function DashboardPage() {
         fetch("/api/sessions"),
       ]);
       if (!eventsRes.ok || !sessionsRes.ok) {
-        showToast("Chyba při načítání dat", "error");
+        const failedEndpoints = [];
+        if (!eventsRes.ok) failedEndpoints.push(`Kalendář (${eventsRes.status})`);
+        if (!sessionsRes.ok) failedEndpoints.push(`Sessions (${sessionsRes.status})`);
+        showToast(`Chyba: ${failedEndpoints.join(", ")}`, "error");
         return;
       }
       const { events } = await eventsRes.json();
