@@ -1,16 +1,14 @@
-import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
- * Edge Runtime middleware – používá POUZE getToken() z next-auth/jwt.
- * getToken() je Edge-kompatibilní (používá Web Crypto API, žádný Node.js, žádný Supabase).
- * Vercel vyžaduje middleware.ts (nikoli proxy.ts).
+ * Minimální Edge-compatible middleware.
+ * Kontroluje POUZE přítomnost NextAuth session cookie – bez krypto operací.
+ * Skutečná validace tokenu probíhá v server komponentách přes auth().
  */
-export async function middleware(req: NextRequest) {
+export function middleware(req: NextRequest) {
   const { nextUrl } = req;
 
-  // Veřejné routes – propustit bez autentizace
   const isPublic = nextUrl.pathname.startsWith("/login");
   const isApiAuth = nextUrl.pathname.startsWith("/api/auth");
   const isWebhook =
@@ -19,13 +17,12 @@ export async function middleware(req: NextRequest) {
 
   if (isApiAuth || isWebhook || isPublic) return NextResponse.next();
 
-  // JWT check – Edge-kompatibilní, čte pouze cookie
-  const token = await getToken({
-    req,
-    secret: process.env.AUTH_SECRET,
-  });
+  // Kontrola NextAuth session cookie – funguje v Edge Runtime bez závislostí
+  const sessionToken =
+    req.cookies.get("next-auth.session-token") ??
+    req.cookies.get("__Secure-next-auth.session-token");
 
-  if (!token) {
+  if (!sessionToken) {
     return NextResponse.redirect(new URL("/login", nextUrl));
   }
 
