@@ -1,11 +1,9 @@
-import { auth } from "@/auth";
+import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-// Next.js 16: proxy.ts (přejmenováno z middleware.ts)
-// Běží v Node.js runtime – může importovat @/auth i Supabase
+// Lightweight auth check v proxy – používá pouze JWT cookie, žádný Supabase
 export async function proxy(req: NextRequest) {
-  const session = await auth();
   const { nextUrl } = req;
 
   const isPublic = nextUrl.pathname.startsWith("/login");
@@ -16,7 +14,12 @@ export async function proxy(req: NextRequest) {
 
   if (isApiAuth || isWebhook || isPublic) return NextResponse.next();
 
-  if (!session) {
+  const token = await getToken({
+    req,
+    secret: process.env.AUTH_SECRET,
+  });
+
+  if (!token) {
     return NextResponse.redirect(new URL("/login", nextUrl));
   }
 
