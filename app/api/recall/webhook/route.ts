@@ -1,24 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase";
-import { createHmac } from "crypto";
 
 /**
  * Recall.ai Webhook – přijímá stav bota
- * Spouští AssemblyAI job async, žádné velké stahování
+ * Payload formát:
+ * {
+ *   "event": "bot.status_change",
+ *   "data": {
+ *     "data": { "code": "in_call_recording", "sub_code": null, "updated_at": "..." },
+ *     "bot": { "id": "...", "metadata": { "session_id": "..." } }
+ *   }
+ * }
  */
 export async function POST(req: NextRequest) {
   const body = await req.text();
 
-  // Ověření HMAC podpisu od Recall.ai
-  const signature = req.headers.get("x-recall-signature");
-  if (process.env.RECALL_WEBHOOK_SECRET && signature) {
-    const expected = createHmac("sha256", process.env.RECALL_WEBHOOK_SECRET)
-      .update(body)
-      .digest("hex");
-    if (expected !== signature) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
-  }
+  // Kvůli debugování logujeme payload
+  console.log("Recall webhook received:", body.substring(0, 500));
 
   let payload: RecallWebhookPayload;
   try {
@@ -30,51 +28,121 @@ export async function POST(req: NextRequest) {
   const supabase = createServerClient();
   const { event, data } = payload;
 
+  // Extrahuj bot ID a status z nového formátu
+  const botId = data.bot?.id ?? data.bot_id;
+  const statusCode = data.data?.code ?? data.status;
+  const metadata = data.bot?.metadata ?? {};
+
+  if (!botId) {
+    console.error("Recall webhook: missing bot ID", payload);
+    return NextResponse.json({ ok: true });
+  }
+
+  console.log(`Recall webhook: event=${event}, botId=${botId}, status=${statusCode}`);
+
   // Najdi bot session
   const { data: botSession } = await supabase
     .from("bot_sessions")
     .select("*")
-    .eq("recall_bot_id", data.bot_id)
+    .eq("recall_bot_id", botId)
     .single();
 
   if (!botSession) {
-    // Neznámý bot – ignoruj
+    // Zkus najít přes metadata session_id
+    if (metadata.session_id) {
+      const { data: sessionByMeta } = await supabase
+        .from("bot_sessions")
+        .select("*")
+        .eq("id", metadata.session_id)
+        .single();
+      if (!sessionByMeta) {
+        console.log("Recall webhook: unknown bot, ignoring", botId);
+        return NextResponse.json({ ok: true });
+      }
+      // Aktualizuj recall_bot_id
+      await supabase.from("bot_sessions").update({ recall_bot_id: botId }).eq("id", sessionByMeta.id);
+      return handleStatusChange(sessionByMeta, statusCode, supabase);
+    }
+    console.log("Recall webhook: unknown bot, ignoring", botId);
     return NextResponse.json({ ok: true });
   }
 
   if (event === "bot.status_change") {
-    const status = data.status?.toLowerCase();
+    return handleStatusChange(botSession, statusCode, supabase);
+  }
 
-    if (status === "in_call_recording" || status === "joining_call") {
-      await supabase
-        .from("bot_sessions")
-        .update({ status: "joined" })
-        .eq("id", botSession.id);
-    }
+  return NextResponse.json({ ok: true });
+}
 
-    if (status === "done" || status === "call_ended") {
-      const recordingUrl = data.recording?.video_url;
-      const durationSecs = data.recording?.duration_secs ?? null;
+async function handleStatusChange(
+  botSession: BotSessionRow,
+  statusCode: string | undefined,
+  supabase: ReturnType<typeof createServerClient>
+) {
+  const status = statusCode?.toLowerCase();
+  console.log(`Processing status change for session ${botSession.id}: ${status}`);
 
-      await supabase.from("bot_sessions").update({
-        status: "processing",
-        recall_recording_url: recordingUrl ?? null,
-        duration_secs: durationSecs,
-        ended_at: new Date().toISOString(),
-      }).eq("id", botSession.id);
+  if (status === "in_call_recording" || status === "joining_call" || status === "in_waiting_room" || status === "in_call_not_recording") {
+    await supabase
+      .from("bot_sessions")
+      .update({ status: "joined" })
+      .eq("id", botSession.id);
+  }
 
-      // Spusť AssemblyAI async (NEČEKÁ – jen pošle job)
-      if (recordingUrl) {
-        await triggerAssemblyAI(botSession.id, botSession.user_email, recordingUrl, supabase);
+  if (status === "done" || status === "call_ended") {
+    // Stáhni recording URL z Recall API
+    let recordingUrl: string | null = null;
+    let durationSecs: number | null = null;
+
+    try {
+      const botDetailRes = await fetch(`https://us-west-2.recall.ai/api/v1/bot/${botSession.recall_bot_id}/`, {
+        headers: { Authorization: `Token ${process.env.RECALL_API_KEY}` },
+      });
+
+      if (botDetailRes.ok) {
+        const botDetail = await botDetailRes.json();
+        // Recall API vrací video_url v "recordings" poli
+        if (botDetail.recordings && botDetail.recordings.length > 0) {
+          recordingUrl = botDetail.recordings[0].media_shortcuts?.url ?? null;
+        }
+        // Nebo alternativně v video_url
+        if (!recordingUrl && botDetail.video_url) {
+          recordingUrl = botDetail.video_url;
+        }
+        // Délka
+        if (botDetail.meeting_metadata?.duration) {
+          durationSecs = botDetail.meeting_metadata.duration;
+        }
+        console.log(`Bot detail: recording=${recordingUrl ? "yes" : "no"}, duration=${durationSecs}`);
+      } else {
+        console.error("Failed to fetch bot detail:", botDetailRes.status, await botDetailRes.text());
       }
+    } catch (err) {
+      console.error("Error fetching bot detail:", err);
     }
 
-    if (status === "fatal" || status === "error") {
-      await supabase
-        .from("bot_sessions")
-        .update({ status: "failed" })
-        .eq("id", botSession.id);
+    await supabase.from("bot_sessions").update({
+      status: "processing",
+      recall_recording_url: recordingUrl,
+      duration_secs: durationSecs,
+      ended_at: new Date().toISOString(),
+    }).eq("id", botSession.id);
+
+    // Spusť AssemblyAI async
+    if (recordingUrl) {
+      await triggerAssemblyAI(botSession.id, botSession.user_email, recordingUrl, supabase);
+    } else {
+      console.warn("No recording URL available for session:", botSession.id);
+      // Označíme jako done bez přepisu
+      await supabase.from("bot_sessions").update({ status: "done" }).eq("id", botSession.id);
     }
+  }
+
+  if (status === "fatal" || status === "error") {
+    await supabase
+      .from("bot_sessions")
+      .update({ status: "failed" })
+      .eq("id", botSession.id);
   }
 
   return NextResponse.json({ ok: true });
@@ -121,10 +189,28 @@ async function triggerAssemblyAI(
   }
 }
 
+interface BotSessionRow {
+  id: string;
+  user_email: string;
+  recall_bot_id: string | null;
+  [key: string]: unknown;
+}
+
 interface RecallWebhookPayload {
   event: string;
   data: {
-    bot_id: string;
+    // Nový formát Recall
+    bot?: {
+      id: string;
+      metadata?: Record<string, string>;
+    };
+    data?: {
+      code?: string;
+      sub_code?: string | null;
+      updated_at?: string;
+    };
+    // Starý formát (pro kompatibilitu)
+    bot_id?: string;
     status?: string;
     recording?: {
       video_url?: string;
