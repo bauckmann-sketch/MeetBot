@@ -33,6 +33,7 @@ export default function AdminPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
   const [botNameInput, setBotNameInput] = useState("MeetBot");
+  const [driveFolderInput, setDriveFolderInput] = useState("");
   const [saving, setSaving] = useState(false);
 
   const currentMonth = new Date().toISOString().slice(0, 7); // "2025-04"
@@ -148,53 +149,83 @@ export default function AdminPage() {
           <p className="text-sm text-muted mb-4">
             Záznamy a přepisy budou nahrány do vaší Google Drive složky.
           </p>
-          {userSettings.drive_folder_name ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span className="badge badge-done">📁 {userSettings.drive_folder_name}</span>
-              <span className="text-sm text-muted">ID: {userSettings.drive_folder_id}</span>
-              <a
-                href={`https://drive.google.com/drive/folders/${userSettings.drive_folder_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-              >
-                Otevřít na Drivu ↗
-              </a>
+          {userSettings.drive_folder_id ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span className="badge badge-done">📁 {userSettings.drive_folder_name || "Složka nastavena"}</span>
+                <a
+                  href={`https://drive.google.com/drive/folders/${userSettings.drive_folder_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn-ghost btn-sm"
+                >
+                  Otevřít na Drivu ↗
+                </a>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setUserSettings({ drive_folder_id: "", drive_folder_name: "" });
+                    setDriveFolderInput("");
+                  }}
+                >
+                  Změnit
+                </button>
+              </div>
             </div>
           ) : (
-            <div style={{ textAlign: "center", padding: 20 }}>
-              <div style={{ marginBottom: 12, color: "var(--text-secondary)" }}>
-                Složka nenastavena
-              </div>
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  setSaving(true);
-                  try {
-                    const res = await fetch("/api/drive/folder", { method: "POST" });
-                    if (!res.ok) {
-                      const err = await res.json();
-                      throw new Error(err.error);
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <label className="label">URL složky na Google Drivu</label>
+              <div className="input-group">
+                <input
+                  id="drive-folder-input"
+                  className="input"
+                  value={driveFolderInput}
+                  onChange={(e) => setDriveFolderInput(e.target.value)}
+                  placeholder="https://drive.google.com/drive/folders/..."
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    // Extrahuj folder ID z URL
+                    const match = driveFolderInput.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+                    if (!match) {
+                      showToast("Neplatná URL – vložte odkaz na Google Drive složku", "error");
+                      return;
                     }
-                    const { folder } = await res.json();
-                    setUserSettings({
-                      drive_folder_id: folder.id,
-                      drive_folder_name: folder.name,
-                    });
-                    showToast("Složka vytvořena na Google Drivu ✅", "success");
-                  } catch (err: unknown) {
-                    showToast(
-                      err instanceof Error ? err.message : "Chyba při vytváření složky",
-                      "error"
-                    );
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-                disabled={saving}
-              >
-                {saving ? "Vytvářím…" : "📁 Vytvořit složku na Google Drivu"}
-              </button>
+                    const folderId = match[1];
+                    setSaving(true);
+                    try {
+                      const res = await fetch("/api/admin/settings", {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          driveFolderId: folderId,
+                          driveFolderName: "Google Drive",
+                        }),
+                      });
+                      if (!res.ok) throw new Error("Chyba při ukládání");
+                      setUserSettings({
+                        drive_folder_id: folderId,
+                        drive_folder_name: "Google Drive",
+                      });
+                      showToast("Složka uložena ✅", "success");
+                    } catch (err: unknown) {
+                      showToast(
+                        err instanceof Error ? err.message : "Chyba",
+                        "error"
+                      );
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                  disabled={saving || !driveFolderInput.trim()}
+                >
+                  {saving ? "Ukládám…" : "Uložit"}
+                </button>
+              </div>
+              <p className="text-sm text-muted">
+                Otevřete složku na Google Drivu a zkopírujte URL z adresního řádku.
+              </p>
             </div>
           )}
         </div>
