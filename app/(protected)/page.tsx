@@ -77,7 +77,8 @@ export default function DashboardPage() {
         });
         if (!res.ok) {
           const err = await res.json();
-          throw new Error(err.error);
+          const detail = err.detail ? JSON.stringify(err.detail) : "";
+          throw new Error(`${err.error} (${err.status}) ${detail}`);
         }
         showToast("Bot odeslán na schůzku! ✅", "success");
       }
