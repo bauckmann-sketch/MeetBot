@@ -55,7 +55,6 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         meeting_url: meetingUrl,
         bot_name: "MeetBot",
-        transcription_options: { provider: "assembly_ai" },
         webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/recall/webhook`,
         metadata: { session_id: sessionId },
       }),
