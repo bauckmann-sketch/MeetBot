@@ -127,13 +127,13 @@ export default function RecordingsPage() {
                     <tr key={s.id}>
                       <td className="text-muted text-sm">{formatDate(s.created_at)}</td>
                       <td>
-                        <span
+                        <a
+                          href={`/transcript/${s.id}`}
                           className="font-semibold"
-                          style={{ cursor: "pointer", textDecoration: "underline dotted" }}
-                          onClick={() => router.push(`/transcript/${s.id}`)}
+                          style={{ color: "var(--text-primary)", textDecoration: "underline dotted" }}
                         >
                           {s.event_title}
-                        </span>
+                        </a>
                       </td>
                       <td>
                         {s.meeting_platform ? (
