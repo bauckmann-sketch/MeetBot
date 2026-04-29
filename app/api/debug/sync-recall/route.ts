@@ -54,18 +54,12 @@ export async function POST() {
         let recordingUrl: string | null = null;
 
         if (botData.recordings && botData.recordings.length > 0) {
-          // Fetch recording detail to get media URL
-          const recId = botData.recordings[0].id;
-          const recRes = await fetch(
-            `https://us-west-2.recall.ai/api/v1/bot/${botSession.recall_bot_id}/recordings/${recId}/media/`,
-            { headers: { Authorization: `Token ${process.env.RECALL_API_KEY}` } }
-          );
-          if (recRes.ok) {
-            const recData = await recRes.json();
-            recordingUrl = recData.download_url ?? recData.url ?? null;
-          } else {
-            // Try video_url from bot detail
-            recordingUrl = botData.video_url ?? null;
+          const rec = botData.recordings[0];
+          // Recall ukládá URL v media_shortcuts.video_mixed.data.download_url
+          recordingUrl = rec.media_shortcuts?.video_mixed?.data?.download_url ?? null;
+          // Fallback na starší formát
+          if (!recordingUrl) {
+            recordingUrl = rec.download_url ?? rec.url ?? botData.video_url ?? null;
           }
         }
 

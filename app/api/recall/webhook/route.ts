@@ -101,13 +101,13 @@ async function handleStatusChange(
 
       if (botDetailRes.ok) {
         const botDetail = await botDetailRes.json();
-        // Recall API vrací video_url v "recordings" poli
+        // Recall API vrací URL v recordings[0].media_shortcuts.video_mixed.data.download_url
         if (botDetail.recordings && botDetail.recordings.length > 0) {
-          recordingUrl = botDetail.recordings[0].media_shortcuts?.url ?? null;
-        }
-        // Nebo alternativně v video_url
-        if (!recordingUrl && botDetail.video_url) {
-          recordingUrl = botDetail.video_url;
+          const rec = botDetail.recordings[0];
+          recordingUrl = rec.media_shortcuts?.video_mixed?.data?.download_url ?? null;
+          if (!recordingUrl) {
+            recordingUrl = rec.download_url ?? rec.url ?? botDetail.video_url ?? null;
+          }
         }
         // Délka
         if (botDetail.meeting_metadata?.duration) {
