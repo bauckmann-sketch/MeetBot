@@ -14,12 +14,14 @@ export async function POST() {
 
   const supabase = createServerClient();
 
-  // Najdi sessions které jsou stuck na dispatched/pending
+  // Najdi sessions které potřebují re-sync:
+  // - dispatched/pending (webhook nedorazil)
+  // - done bez assembly_job_id (předčasně označené jako done)
   const { data: stuckSessions } = await supabase
     .from("bot_sessions")
     .select("*")
     .eq("user_email", session.user.email)
-    .in("status", ["dispatched", "pending"])
+    .or("status.in.(dispatched,pending),and(status.eq.done,assembly_job_id.is.null)")
     .order("created_at", { ascending: false });
 
   if (!stuckSessions || stuckSessions.length === 0) {
