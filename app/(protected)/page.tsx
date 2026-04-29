@@ -33,10 +33,14 @@ export default function DashboardPage() {
       const { events } = await eventsRes.json();
       const { sessions } = await sessionsRes.json();
 
-      // Spáruj events se sessions
+      // Spáruj events se sessions – jen aktivní (ne done/failed)
       const sessionsByEvent = new Map<string, BotSession>();
       for (const s of sessions as BotSession[]) {
-        sessionsByEvent.set(s.event_id, s);
+        // Aktivní session = dispatched, pending, joined, processing
+        const isActive = !["done", "failed"].includes(s.status);
+        if (isActive) {
+          sessionsByEvent.set(s.event_id, s);
+        }
       }
 
       setItems(
@@ -134,7 +138,6 @@ export default function DashboardPage() {
             const isOn = !!session;
             const isBusy = dispatching.has(event.id);
             const hasNoLink = !platform;
-            const sessionDone = session?.status === "done";
 
             return (
               <div className="event-row" key={event.id}>
@@ -148,7 +151,6 @@ export default function DashboardPage() {
                 <div className="event-title-row">
                   <span className="event-title">{event.summary}</span>
                   {live && <span className="badge badge-live">● LIVE</span>}
-                  {sessionDone && <span className="badge badge-done">✓ Hotovo</span>}
                   {session?.status === "processing" && <span className="badge badge-processing">⏳ Přepis</span>}
                   {session?.status === "joined" && <span className="badge badge-dispatched">● Živě</span>}
                 </div>
@@ -173,7 +175,7 @@ export default function DashboardPage() {
                       <input
                         type="checkbox"
                         checked={isOn}
-                        disabled={hasNoLink || sessionDone || isBusy}
+                        disabled={hasNoLink || isBusy}
                         onChange={() => handleToggle({ event, session, platform })}
                       />
                       <span className="toggle-slider" />

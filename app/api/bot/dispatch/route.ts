@@ -44,6 +44,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Database error" }, { status: 500 });
   }
 
+  // Načti jméno bota z nastavení
+  const { data: settings } = await supabase.from("settings").select("bot_name").single();
+  const botName = settings?.bot_name || "MeetBot";
+
   // Odešle Recall bot
   try {
     const recallResponse = await fetch("https://us-west-2.recall.ai/api/v1/bot/", {
@@ -54,7 +58,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         meeting_url: meetingUrl,
-        bot_name: "MeetBot",
+        bot_name: botName,
         webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/recall/webhook`,
         metadata: { session_id: sessionId },
       }),

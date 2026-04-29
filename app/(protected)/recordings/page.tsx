@@ -80,6 +80,19 @@ export default function RecordingsPage() {
     });
   }
 
+  function formatTime(iso: string) {
+    return new Date(iso).toLocaleTimeString("cs-CZ", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function formatTimeRange(start: string, end: string | null) {
+    const from = formatTime(start);
+    if (!end) return from;
+    return `${from} – ${formatTime(end)}`;
+  }
+
   return (
     <>
       <div className="page-header">
@@ -106,7 +119,9 @@ export default function RecordingsPage() {
               <thead>
                 <tr>
                   <th>Datum</th>
+                  <th>Čas</th>
                   <th>Název</th>
+                  <th>Účastníci</th>
                   <th>Platforma</th>
                   <th>Délka</th>
                   <th>Status</th>
@@ -126,6 +141,9 @@ export default function RecordingsPage() {
                   return (
                     <tr key={s.id}>
                       <td className="text-muted text-sm">{formatDate(s.created_at)}</td>
+                      <td className="text-sm" style={{ whiteSpace: "nowrap" }}>
+                        {formatTimeRange(s.created_at, s.ended_at)}
+                      </td>
                       <td>
                         <a
                           href={`/transcript/${s.id}`}
@@ -134,6 +152,12 @@ export default function RecordingsPage() {
                         >
                           {s.event_title}
                         </a>
+                      </td>
+                      <td className="text-sm">
+                        {(s as unknown as { speaker_count?: number }).speaker_count
+                          ? `👥 ${(s as unknown as { speaker_count?: number }).speaker_count}`
+                          : <span className="text-muted">—</span>
+                        }
                       </td>
                       <td>
                         {s.meeting_platform ? (

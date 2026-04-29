@@ -24,5 +24,32 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ sessions });
+  // Doplň počet mluvčích z transcript_data
+  const sessionIds = (sessions ?? []).map((s) => s.id);
+  let speakerCounts: Record<string, number> = {};
+
+  if (sessionIds.length > 0) {
+    const { data: transcripts } = await supabase
+      .from("transcript_data")
+      .select("session_id, utterances")
+      .in("session_id", sessionIds);
+
+    if (transcripts) {
+      for (const t of transcripts) {
+        const utterances = t.utterances ?? [];
+        const uniqueSpeakers = new Set(
+          utterances.map((u: { speaker: string }) => u.speaker)
+        );
+        speakerCounts[t.session_id] = uniqueSpeakers.size;
+      }
+    }
+  }
+
+  // Přidej speaker_count ke každé session
+  const enriched = (sessions ?? []).map((s) => ({
+    ...s,
+    speaker_count: speakerCounts[s.id] ?? 0,
+  }));
+
+  return NextResponse.json({ sessions: enriched });
 }
