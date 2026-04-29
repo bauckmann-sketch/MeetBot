@@ -15,29 +15,47 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { transcript_id, status } = body;
 
-  if (status !== "completed") {
-    // error nebo jiný stav
-    return NextResponse.json({ ok: true });
-  }
+  console.log("AssemblyAI webhook received:", JSON.stringify({ transcript_id, status }));
 
-  // Session ID posíláme v custom header
-  const sessionId = req.headers.get("x-meetbot-session");
-  if (!sessionId) {
-    return NextResponse.json({ error: "Missing session header" }, { status: 400 });
+  if (status !== "completed") {
+    console.log("AssemblyAI webhook: ignoring status", status);
+    return NextResponse.json({ ok: true });
   }
 
   const supabase = createServerClient();
 
-  // Najdi session
-  const { data: botSession } = await supabase
+  // Najdi session přes assembly_job_id (spolehlivější než custom header)
+  // Fallback na header x-meetbot-session
+  let botSession = null;
+
+  // Metoda 1: Hledej přes assembly_job_id
+  const { data: sessionByJob } = await supabase
     .from("bot_sessions")
     .select("*")
-    .eq("id", sessionId)
+    .eq("assembly_job_id", transcript_id)
     .single();
 
+  if (sessionByJob) {
+    botSession = sessionByJob;
+  } else {
+    // Metoda 2: Fallback na custom header
+    const sessionId = req.headers.get("x-meetbot-session");
+    if (sessionId) {
+      const { data: sessionByHeader } = await supabase
+        .from("bot_sessions")
+        .select("*")
+        .eq("id", sessionId)
+        .single();
+      botSession = sessionByHeader;
+    }
+  }
+
   if (!botSession) {
+    console.error("AssemblyAI webhook: session not found for transcript_id:", transcript_id);
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
+
+  console.log(`Processing transcript for session ${botSession.id}: ${botSession.event_title}`);
 
   try {
     // Stáhni přepis z AssemblyAI
@@ -119,12 +137,12 @@ export async function POST(req: NextRequest) {
       drive_recording_url: driveRecordingUrl,
       cost_bot_usd: costBot,
       cost_transcript_usd: costTranscript,
-    }).eq("id", sessionId);
+    }).eq("id", botSession.id);
 
     // Ulož utterances zvlášť do transcript_data tabulky
     if (utterances.length > 0) {
       await supabase.from("transcript_data").upsert({
-        session_id: sessionId,
+        session_id: botSession.id,
         utterances: utterances,
         text: transcript.text ?? "",
         updated_at: new Date().toISOString(),
@@ -137,7 +155,7 @@ export async function POST(req: NextRequest) {
     await supabase
       .from("bot_sessions")
       .update({ status: "failed" })
-      .eq("id", sessionId);
+      .eq("id", botSession.id);
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 }
