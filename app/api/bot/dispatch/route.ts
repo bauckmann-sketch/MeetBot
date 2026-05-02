@@ -3,11 +3,14 @@ import { auth } from "@/auth";
 import { createServerClient } from "@/lib/supabase";
 import { createId } from "@paralleldrive/cuid2";
 import { detectPlatform, getMeetingUrl } from "@/lib/utils";
+import { google } from "googleapis";
 import type { CalendarEvent } from "@/lib/types";
+
+const BOT_EMAIL = process.env.BOT_GOOGLE_EMAIL || "meetbot-inovatix@gmail.com";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session?.user?.email) {
+  if (!session?.user?.email || !session?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -44,6 +47,42 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Database error" }, { status: 500 });
   }
 
+  // Automaticky přidej bot email na kalendářní pozvánku (aby přeskočil waiting room)
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: session.accessToken });
+    const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+    // Načti aktuální attendees
+    const eventDetail = await calendar.events.get({
+      calendarId: "primary",
+      eventId: event.id,
+    });
+
+    const existingAttendees = eventDetail.data.attendees || [];
+    const botAlreadyInvited = existingAttendees.some(
+      (a) => a.email?.toLowerCase() === BOT_EMAIL.toLowerCase()
+    );
+
+    if (!botAlreadyInvited) {
+      await calendar.events.patch({
+        calendarId: "primary",
+        eventId: event.id,
+        sendUpdates: "none", // Nepošle email notifikaci účastníkům
+        requestBody: {
+          attendees: [
+            ...existingAttendees,
+            { email: BOT_EMAIL, responseStatus: "accepted" },
+          ],
+        },
+      });
+      console.log(`Bot email ${BOT_EMAIL} added to calendar event ${event.id}`);
+    }
+  } catch (err) {
+    // Neblokujeme dispatch – bot se může připojit i bez pozvánky
+    console.warn("Failed to add bot to calendar event:", err);
+  }
+
   // Načti jméno bota z nastavení
   const { data: settings } = await supabase.from("settings").select("bot_name").single();
   const botName = settings?.bot_name || "MeetBot";
@@ -67,7 +106,7 @@ export async function POST(req: NextRequest) {
         },
         // Konfigurace timeoutů
         automatic_leave: {
-          waiting_room_timeout: 3600,       // 60 min ve waiting room
+          waiting_room_timeout: 3600,       // 60 min ve waiting room (záloha)
           noone_joined_timeout: 3600,       // 60 min čekání na prvního účastníka
           everyone_left_timeout: {
             timeout: 120,                   // 2 min po odchodu všech
@@ -84,7 +123,6 @@ export async function POST(req: NextRequest) {
         .from("bot_sessions")
         .update({ status: "failed" })
         .eq("id", sessionId);
-      // Vrátíme detail chyby pro debugging
       let errDetail: unknown;
       try { errDetail = JSON.parse(errText); } catch { errDetail = errText; }
       return NextResponse.json(
