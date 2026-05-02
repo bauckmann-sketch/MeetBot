@@ -102,8 +102,8 @@ export async function POST(req: NextRequest) {
         metadata: { session_id: sessionId },
         // Konfigurace timeoutů
         automatic_leave: {
-          waiting_room_timeout: 3600,       // 60 min ve waiting room (záloha)
-          noone_joined_timeout: 3600,       // 60 min čekání na prvního účastníka
+          waiting_room_timeout: 300,        // 5 min ve waiting room
+          noone_joined_timeout: 300,        // 5 min čekání na prvního účastníka
           everyone_left_timeout: {
             timeout: 120,                   // 2 min po odchodu všech
             activate_after: null,
