@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS bot_sessions (
   drive_video_url       TEXT,
   drive_transcript_url  TEXT,
   drive_folder_id       TEXT,
+  recall_cleaned        BOOLEAN DEFAULT FALSE,  -- nahrávka smazána z Recall
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   ended_at              TIMESTAMPTZ
 );
