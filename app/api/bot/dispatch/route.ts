@@ -61,6 +61,10 @@ export async function POST(req: NextRequest) {
         bot_name: botName,
         webhook_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/recall/webhook`,
         metadata: { session_id: sessionId },
+        // Google Meet – přihlášený bot přeskočí waiting room
+        google_meet: {
+          login_required: true,
+        },
         // Konfigurace timeoutů
         automatic_leave: {
           waiting_room_timeout: 3600,       // 60 min ve waiting room
